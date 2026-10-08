@@ -1,0 +1,5 @@
+This plugin calls the Wyoming protocol through the Python package wyoming.
+
+The copyright line below is the copyright notice from that package's LICENSE.md.
+
+Copyright (c) 2023 Michael Hansen

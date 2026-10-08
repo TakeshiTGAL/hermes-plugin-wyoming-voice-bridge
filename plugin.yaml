@@ -1,0 +1,47 @@
+name: wyoming-voice-bridge
+version: 0.1.0
+manifest_version: 2
+description: >-
+  Speech recognition and speech synthesis for Hermes voice mode, on a Wyoming
+  server you run. Built on the Wyoming protocol.
+author: TakeshiTGAL
+license: MIT
+homepage: https://github.com/TakeshiTGAL/hermes-plugin-wyoming-voice-bridge
+tags: [wyoming, voice, stt, tts]
+requires_hermes: ">=0.21.4"
+
+python_dependencies:
+  - "wyoming>=1.5.4,<2"
+
+provides_tools:
+  - wyoming_voice_status
+
+optional_env:
+  - name: WYOMING_STT_HOST
+    description: "Hostname or IP of your Wyoming speech-recognition server. No URL."
+    prompt: "Wyoming STT host"
+    password: false
+  - name: WYOMING_STT_PORT
+    description: "TCP port of that server, from 1 to 65535."
+    prompt: "Wyoming STT port"
+    password: false
+  - name: WYOMING_TTS_HOST
+    description: "Hostname or IP of your Wyoming speech-synthesis server. No URL."
+    prompt: "Wyoming TTS host"
+    password: false
+  - name: WYOMING_TTS_PORT
+    description: "TCP port of that server, from 1 to 65535."
+    prompt: "Wyoming TTS port"
+    password: false
+  - name: WYOMING_STT_MODEL
+    description: "Model name the server lists as installed. Empty uses the server default."
+    prompt: "Wyoming STT model"
+    password: false
+  - name: WYOMING_STT_LANGUAGE
+    description: "Sent after a hook and stt.wyoming.language, and before raw stt.language and HERMES_LOCAL_STT_LANGUAGE. Empty or default omits it."
+    prompt: "Wyoming STT language"
+    password: false
+  - name: WYOMING_TTS_VOICE
+    description: "Voice or speaker the server lists as installed. Empty uses the server default."
+    prompt: "Wyoming TTS voice"
+    password: false
