@@ -11,7 +11,7 @@ which is stt, tts, or both. Listing models does not require stt.provider or tts.
 
 Japanese requests use the same tool. Search in English, then answer in Japanese:
 
-- List the speech voices. 「声の一覧」 → tool_search "Wyoming speech" → `wyoming_voice_status` {"which": "stt"} <!-- ja-alias -->
+- List the speech voices. 「声の一覧」 → tool_search "Wyoming speech synthesis" → `wyoming_voice_status` {"which": "tts"} <!-- ja-alias -->
 - List the speech models. 「モデルの一覧」 → tool_search "Wyoming speech" → `wyoming_voice_status` {"which": "stt"} <!-- ja-alias -->
 - Can it transcribe speech. 「文字起こしできる」 → tool_search "Wyoming speech recognition" → `wyoming_voice_status` {"which": "stt"} <!-- ja-alias -->
 - Voices for reading aloud. 「読み上げの声」 → tool_search "Wyoming speech synthesis" → `wyoming_voice_status` {"which": "tts"} <!-- ja-alias -->

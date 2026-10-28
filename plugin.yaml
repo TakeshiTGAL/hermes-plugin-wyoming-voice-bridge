@@ -1,5 +1,5 @@
 name: wyoming-voice-bridge
-version: 0.1.5
+version: 0.1.6
 manifest_version: 2
 description: >-
   Speech recognition and speech synthesis for Hermes voice mode, on a Wyoming

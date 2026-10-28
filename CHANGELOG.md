@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.6
+
+In the `wyoming-speech` skill, the line for listing speech voices («声の一覧») now calls `wyoming_voice_status` with `{"which": "tts"}` and searches for "Wyoming speech synthesis". It used to point at speech recognition, which lists models, not voices.
+
 ## 0.1.5
 
 `wyoming_voice_status` returns block on cron, `hermes -q`, webhook, msgraph_webhook, and api_server, even after always. The hook does this before Hermes reads the allowlist, and the handler does not open a describe. yolo and approvals off still skip the prompt. Hermes 0.21.4 does not list the `wyoming-speech` skill. The v0.21.5 canary's prompt builder adds plugin skills to the index, and Hermes 0.22.2 lists the line. The 0.1.1 note that 0.21.5 does not list the skill was wrong for that canary. With the v0.22.2 checkout on `HERMES_SRC` and `HERMES_AGENT_SRC`, that interpreter, and wyoming 1.5.4, pytest reported 122 passed and 0 skipped.
