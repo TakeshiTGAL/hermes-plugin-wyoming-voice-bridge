@@ -1,6 +1,7 @@
 """Public pre_tool_call line for one Wyoming describe. Speech providers do not call this."""
 from __future__ import annotations
 
+import contextvars
 import hashlib
 import json
 import os
@@ -14,6 +15,7 @@ if __package__:
         approval_too_long,
         host_process_blocked,
         not_approved,
+        unattended_blocked,
     )
 else:
     from messages import (
@@ -21,12 +23,65 @@ else:
         approval_too_long,
         host_process_blocked,
         not_approved,
+        unattended_blocked,
     )
 
 TOOL = "wyoming_voice_status"
 _LOCK = threading.Lock()
 _STASH: dict[tuple, tuple[tuple, float]] = {}
 _STASH_TTL = 600
+# The same platforms Hermes treats as unattended: webhook, msgraph_webhook, api_server.
+_UNATTENDED_PLATFORMS = frozenset({"webhook", "msgraph_webhook", "api_server"})
+_TRUTHY = frozenset({"1", "true", "yes", "on"})
+
+
+def _context_value(name: str):
+    """Value of a ContextVar with this name, if this turn set one.
+
+    An unset var is absent. A non-string sentinel is not a value, so the caller
+    falls back to the process environment. An explicit empty string does not.
+    """
+    try:
+        current = contextvars.copy_context()
+    except Exception:
+        return None
+    for var, value in current.items():
+        if getattr(var, "name", None) == name:
+            return value
+    return None
+
+
+def session_flag(name: str) -> str:
+    """ContextVar first, including an explicit empty string. Otherwise the process environment."""
+    value = _context_value(name)
+    if isinstance(value, str):
+        return value
+    if isinstance(value, bool):
+        return "1" if value else ""
+    return str(os.environ.get(name) or "")
+
+
+def _flag_on(name: str) -> bool:
+    return session_flag(name).strip().lower() in _TRUTHY
+
+
+def unattended_reason() -> str | None:
+    """Why this turn cannot ask a person, or None when a person can be asked.
+
+    Hermes reads a stored always before its own cron, -q, and unattended refusals.
+    A describe is an outbound connection, so those turns are refused here.
+    yolo and approvals off are not in this list.
+    """
+    if os.environ.get("HERMES_PLUGIN_HOST_PROCESS") == "1":
+        return "plugin_host"
+    if _flag_on("HERMES_CRON_SESSION"):
+        return "a cron job"
+    if _flag_on("HERMES_SINGLE_QUERY_SESSION"):
+        return "a single-query run (hermes -q)"
+    platform = session_flag("HERMES_SESSION_PLATFORM").strip().lower()
+    if platform in _UNATTENDED_PLATFORMS:
+        return f"an unattended {platform} session"
+    return None
 
 
 def one_call_rule_key(which: str, targets: list[str]) -> str:
@@ -101,8 +156,11 @@ def on_pre_tool_call(tool_name: str = "", args: dict | None = None, **kwargs: An
     targets, error = describe_targets(folded)
     if error or not targets:
         return None
-    if os.environ.get("HERMES_PLUGIN_HOST_PROCESS") == "1":
+    reason = unattended_reason()
+    if reason == "plugin_host":
         return {"action": "block", "message": host_process_blocked()}
+    if reason:
+        return {"action": "block", "message": unattended_blocked(reason)}
     text = approval_text(targets)
     if len(text) > APPROVAL_TEXT_MAX or "\n" in text or "`" in text:
         return {"action": "block", "message": approval_too_long()}

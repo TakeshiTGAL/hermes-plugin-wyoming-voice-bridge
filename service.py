@@ -9,7 +9,7 @@ from typing import Any, Callable
 if __package__:
     from .audiofiles import load_pcm_wav, write_wav
     from .endpoints import Endpoint, EndpointError, endpoint_from_env
-    from .gate import take_describe
+    from .gate import take_describe, unattended_reason
     from .messages import (
         NAME_MAX,
         bad_endpoint,
@@ -23,6 +23,7 @@ if __package__:
         no_installed,
         not_configured,
         text_too_long,
+        unattended_blocked,
         which_refused,
         MAX_TEXT_CHARS,
     )
@@ -30,7 +31,7 @@ if __package__:
 else:
     from audiofiles import load_pcm_wav, write_wav
     from endpoints import Endpoint, EndpointError, endpoint_from_env
-    from gate import take_describe
+    from gate import take_describe, unattended_reason
     from messages import (
         NAME_MAX,
         bad_endpoint,
@@ -44,6 +45,7 @@ else:
         no_installed,
         not_configured,
         text_too_long,
+        unattended_blocked,
         which_refused,
         MAX_TEXT_CHARS,
     )
@@ -329,13 +331,18 @@ def status(
     if approver is not None:
         denied = approver(targets)
         stash_path = False
-    elif os.environ.get("HERMES_PLUGIN_HOST_PROCESS") == "1":
-        denied = host_process_blocked()
-        stash_path = True
     else:
-        payload = dict(raw) if isinstance(raw, dict) else {"which": which}
-        denied = take_describe(payload, (str(session_id or ""), str(task_id or "")), tuple(targets))
-        stash_path = True
+        reason = unattended_reason()
+        if reason == "plugin_host":
+            denied = host_process_blocked()
+            stash_path = True
+        elif reason:
+            denied = unattended_blocked(reason)
+            stash_path = True
+        else:
+            payload = dict(raw) if isinstance(raw, dict) else {"which": which}
+            denied = take_describe(payload, (str(session_id or ""), str(task_id or "")), tuple(targets))
+            stash_path = True
     if denied:
         body: dict[str, Any] = {"success": False, "error": denied}
         if stash_path:

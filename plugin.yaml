@@ -1,5 +1,5 @@
 name: wyoming-voice-bridge
-version: 0.1.4
+version: 0.1.5
 manifest_version: 2
 description: >-
   Speech recognition and speech synthesis for Hermes voice mode, on a Wyoming
@@ -9,7 +9,9 @@ description: >-
   speech recognition and spoken replies.
   wyoming_voice_status returns one pre_tool_call approve line when the installed
   wyoming tree is the listed 1.5.4 wheel. Hermes shows that line.
-  Session and always cover only the same which and the same host:port list.
+  Session and always cover only the same which and the same host:port list
+  when a person is present. cron, hermes -q, webhook, msgraph_webhook, and
+  api_server do not send a describe, even after always.
   A different which or a different server asks again.
   This build lists one wyoming file-tree sha256, the official 1.5.4 wheel.
   A different tree is not imported and nothing is sent.

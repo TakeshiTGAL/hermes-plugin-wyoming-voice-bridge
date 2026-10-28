@@ -239,6 +239,13 @@ def host_process_blocked() -> str:
     )
 
 
+def unattended_blocked(reason: str) -> str:
+    return (
+        f"BLOCKED: {reason} cannot send a Wyoming describe, even after always. "
+        "Nothing was sent."
+    )
+
+
 def which_refused() -> str:
     return "which must be stt, tts, or both. Nothing was sent."
 

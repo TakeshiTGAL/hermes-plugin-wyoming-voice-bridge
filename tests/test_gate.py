@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 import gate
-from messages import APPROVAL_TEXT_MAX, approval_too_long, host_process_blocked
+from messages import APPROVAL_TEXT_MAX, approval_too_long, host_process_blocked, unattended_blocked
 from service import status
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -36,6 +36,9 @@ def hermes(tmp_path, monkeypatch):
     monkeypatch.delenv("HERMES_EXEC_ASK", raising=False)
     monkeypatch.delenv("HERMES_YOLO", raising=False)
     monkeypatch.delenv("HERMES_PLUGIN_HOST_PROCESS", raising=False)
+    monkeypatch.delenv("HERMES_CRON_SESSION", raising=False)
+    monkeypatch.delenv("HERMES_SINGLE_QUERY_SESSION", raising=False)
+    monkeypatch.delenv("HERMES_SESSION_PLATFORM", raising=False)
     if not (HERMES_SRC / "hermes_cli" / "plugins.py").is_file():
         pytest.skip("set HERMES_SRC to a Hermes source tree")
     src = str(HERMES_SRC)
@@ -285,6 +288,91 @@ def test_host_process_blocks_and_does_not_describe(hermes, monkeypatch):
     body = status("stt", describe_fn=_boom(), raw={"which": "stt"})
     assert body["success"] is False
     assert body["error"] == host_process_blocked()
+
+
+@pytest.mark.parametrize(
+    ("env_name", "env_value", "reason"),
+    [
+        ("HERMES_CRON_SESSION", "1", "a cron job"),
+        ("HERMES_SINGLE_QUERY_SESSION", "1", "a single-query run (hermes -q)"),
+        ("HERMES_SESSION_PLATFORM", "webhook", "an unattended webhook session"),
+        ("HERMES_SESSION_PLATFORM", "msgraph_webhook", "an unattended msgraph_webhook session"),
+        ("HERMES_SESSION_PLATFORM", "api_server", "an unattended api_server session"),
+    ],
+)
+def test_always_does_not_describe_when_unattended(hermes, monkeypatch, env_name, env_value, reason):
+    """A stored always line is not a describe. The real dispatcher must block first."""
+    first = hermes._get_pre_tool_call_directive_details(
+        "wyoming_voice_status", {"which": "stt"}, session_id="person", task_id="t0",
+    )
+    assert first.action == "approve"
+    from tools.approval import approve_permanent
+
+    approve_permanent("plugin_rule:" + first.rule_key)
+    monkeypatch.setenv(env_name, env_value)
+    block, _modified = hermes._dispatch_pre_tool_call_hooks(
+        "wyoming_voice_status", {"which": "stt"}, session_id="away", task_id="t1",
+    )
+    assert block == unattended_blocked(reason)
+    body = status(
+        "stt", describe_fn=_boom(), raw={"which": "stt"}, session_id="away", task_id="t1",
+    )
+    assert body["success"] is False
+    assert body["error"] == unattended_blocked(reason)
+    assert body.get("isError") is True
+
+
+def test_cron_context_blocks_even_when_the_process_env_is_clear(hermes, monkeypatch):
+    first = hermes._get_pre_tool_call_directive_details(
+        "wyoming_voice_status", {"which": "stt"}, session_id="person", task_id="t0",
+    )
+    from tools.approval import approve_permanent
+
+    approve_permanent("plugin_rule:" + first.rule_key)
+    monkeypatch.delenv("HERMES_CRON_SESSION", raising=False)
+    from gateway.session_context import _CRON_SESSION
+
+    token = _CRON_SESSION.set("1")
+    try:
+        block, _modified = hermes._dispatch_pre_tool_call_hooks(
+            "wyoming_voice_status", {"which": "stt"}, session_id="cron-room", task_id="t9",
+        )
+        body = status(
+            "stt", describe_fn=_boom(), raw={"which": "stt"}, session_id="cron-room", task_id="t9",
+        )
+    finally:
+        _CRON_SESSION.reset(token)
+    assert block == unattended_blocked("a cron job")
+    assert body["success"] is False
+    assert body["error"] == unattended_blocked("a cron job")
+
+
+def test_always_still_passes_the_same_plan_when_the_turn_is_not_unattended(hermes):
+    first = hermes._get_pre_tool_call_directive_details(
+        "wyoming_voice_status", {"which": "stt"}, session_id="person", task_id="t0",
+    )
+    from tools.approval import approve_permanent
+
+    approve_permanent("plugin_rule:" + first.rule_key)
+    allowed, _modified = hermes._dispatch_pre_tool_call_hooks(
+        "wyoming_voice_status", {"which": "stt"}, session_id="person", task_id="t4",
+    )
+    assert allowed is None
+
+
+def test_explicit_empty_cron_mark_masks_the_process_env(hermes, monkeypatch):
+    """An explicit empty cron mark is not cron, even if the process env says otherwise."""
+    from gateway.session_context import _CRON_SESSION
+
+    token = _CRON_SESSION.set("")
+    try:
+        monkeypatch.setenv("HERMES_CRON_SESSION", "1")
+        details = hermes._get_pre_tool_call_directive_details(
+            "wyoming_voice_status", {"which": "stt"}, session_id="masked", task_id="t3",
+        )
+    finally:
+        _CRON_SESSION.reset(token)
+    assert details.action == "approve"
 
 
 def test_overlong_question_blocks_without_asking(hermes, monkeypatch):
