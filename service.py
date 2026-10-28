@@ -1,21 +1,24 @@
-"""Speech and describe, without importing Hermes."""
+"""Speech and describe. Hermes modules are imported only inside calls."""
 from __future__ import annotations
 
 import os
 import shutil
+import unicodedata
 from typing import Any, Callable
 
 if __package__:
     from .audiofiles import load_pcm_wav, write_wav
     from .endpoints import Endpoint, EndpointError, endpoint_from_env
-    from .gate import approve_describe
+    from .gate import take_describe
     from .messages import (
         NAME_MAX,
         bad_endpoint,
         bad_name,
+        host_process_blocked,
         language_needs_model,
         language_refused,
         library_missing,
+        library_unpinned,
         name_refused,
         no_installed,
         not_configured,
@@ -27,14 +30,16 @@ if __package__:
 else:
     from audiofiles import load_pcm_wav, write_wav
     from endpoints import Endpoint, EndpointError, endpoint_from_env
-    from gate import approve_describe
+    from gate import take_describe
     from messages import (
         NAME_MAX,
         bad_endpoint,
         bad_name,
+        host_process_blocked,
         language_needs_model,
         language_refused,
         library_missing,
+        library_unpinned,
         name_refused,
         no_installed,
         not_configured,
@@ -47,6 +52,32 @@ else:
 DescribeFn = Callable[..., dict[str, Any]]
 TranscribeFn = Callable[..., str]
 SynthesizeFn = Callable[..., tuple[int, int, int, bytes]]
+
+_WHICH = ("stt", "tts", "both")
+_WHICH_BAD = "which must be stt, tts, or both, so pass one of those, for example which stt."
+_WHICH_EXTRA = (
+    "wyoming_voice_status accepts only which, so drop other arguments and call again, for example which stt."
+)
+
+
+def _which_error(message: str) -> dict[str, Any]:
+    return {"ok": False, "success": False, "error_type": "bad_args", "error": message}
+
+
+def fold_which(args: object) -> str | dict[str, Any]:
+    """Return stt, tts, or both, or a fixed refusal that does not repeat the input."""
+    if not isinstance(args, dict):
+        return _which_error(_WHICH_BAD)
+    if set(args) - {"which"}:
+        return _which_error(_WHICH_EXTRA)
+    if "which" not in args or args.get("which") in (None, ""):
+        return _which_error(_WHICH_BAD)
+    value = args.get("which")
+    if isinstance(value, str):
+        text = unicodedata.normalize("NFKC", value).strip().lower()
+        if text in _WHICH:
+            return text
+    return _which_error(_WHICH_BAD)
 
 
 def _env_endpoint(prefix: str) -> Endpoint | None:
@@ -140,6 +171,15 @@ def _require_voice(summary: dict[str, Any], voice: str | None) -> tuple[str | No
 
 
 def _library_ready() -> None:
+    if __package__:
+        from .wyoming_pin import library_status
+    else:
+        from wyoming_pin import library_status
+    status = library_status()
+    if status == "missing":
+        raise BridgeError(library_missing())
+    if status != "ready":
+        raise BridgeError(library_unpinned())
     try:
         import wyoming  # noqa: F401
     except Exception as exc:
@@ -249,30 +289,58 @@ def _one_status(kind: str, prefix: str, describe_fn: DescribeFn) -> dict[str, An
     }
 
 
-def status(which: str, *, describe_fn: DescribeFn = describe_sync, approver: Callable[[list[str]], str | None] = approve_describe) -> dict[str, Any]:
+def describe_targets(which: str) -> tuple[list[str] | None, str | None]:
+    """Servers this call would describe. No socket. An error means do not ask and do not connect."""
     if which not in {"stt", "tts", "both"}:
-        return {"success": False, "error": which_refused()}
+        return None, which_refused()
     try:
         _library_ready()
     except BridgeError as exc:
-        return {"success": False, "error": exc.message}
+        return None, exc.message
     sides = []
     if which in {"stt", "both"}:
         sides.append(("speech recognition", "WYOMING_STT"))
     if which in {"tts", "both"}:
         sides.append(("speech synthesis", "WYOMING_TTS"))
-    targets = []
+    targets: list[str] = []
     for kind, prefix in sides:
         try:
             endpoint = _env_endpoint(prefix)
         except BridgeError as exc:
-            return {"success": False, "error": exc.message}
+            return None, exc.message
         if endpoint is None:
-            return {"success": False, "error": not_configured(kind)}
+            return None, not_configured(kind)
         targets.append(endpoint.label)
-    denied = approver(targets)
+    return targets, None
+
+
+def status(
+    which: str,
+    *,
+    describe_fn: DescribeFn = describe_sync,
+    approver: Callable[[list[str]], str | None] | None = None,
+    raw: dict | None = None,
+    session_id: str = "",
+    task_id: str = "",
+) -> dict[str, Any]:
+    targets, error = describe_targets(which)
+    if error or not targets:
+        return {"success": False, "error": error or which_refused()}
+    if approver is not None:
+        denied = approver(targets)
+        stash_path = False
+    elif os.environ.get("HERMES_PLUGIN_HOST_PROCESS") == "1":
+        denied = host_process_blocked()
+        stash_path = True
+    else:
+        payload = dict(raw) if isinstance(raw, dict) else {"which": which}
+        denied = take_describe(payload, (str(session_id or ""), str(task_id or "")), tuple(targets))
+        stash_path = True
     if denied:
-        return {"success": False, "error": denied}
+        body: dict[str, Any] = {"success": False, "error": denied}
+        if stash_path:
+            body["isError"] = True
+        return body
     parts = {}
     if which in {"stt", "both"}:
         parts["stt"] = _one_status("speech recognition", "WYOMING_STT", describe_fn)
@@ -285,7 +353,15 @@ def status(which: str, *, describe_fn: DescribeFn = describe_sync, approver: Cal
 
 
 def configured(prefix: str) -> bool:
+    """For is_available(), which must not raise.
+
+    Under a multiplexing gateway with no profile scope, Hermes refuses the read
+    (UnscopedSecretError). That counts as not configured here, and nothing is sent."""
     try:
         return endpoint_from_env(prefix) is not None
     except EndpointError:
         return False
+    except Exception as exc:
+        if type(exc).__name__ == "UnscopedSecretError":
+            return False
+        raise

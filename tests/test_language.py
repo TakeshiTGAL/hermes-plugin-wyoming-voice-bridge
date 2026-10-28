@@ -1,159 +1,32 @@
-"""Language order, without reading the user's Hermes config."""
+"""Recognition language is the plugin setting only.
+
+The language Hermes passes, stt.language, hooks, and the process environment are not sources.
+"""
 import sys
 import types
 
-from providers import RAW_UNREADABLE, build_providers, choose_request_language
+from providers import build_providers, language_from_config, read_plugin_language
 
 
-def test_env_wins_over_the_filled_in_default():
-    assert choose_request_language(
-        "en",
-        wyoming_env="ja",
-        local_env=None,
-        raw_stt={},
-        loaded_resolution="en",
-    ) == "ja"
+def test_empty_and_the_word_default_send_nothing():
+    assert language_from_config("") is None
+    assert language_from_config("  ") is None
+    assert language_from_config("default") is None
+    assert language_from_config("Default") is None
+    assert language_from_config(" DEFAULT ") is None
+    assert language_from_config("en") == "en"
+    assert language_from_config("ja") == "ja"
+    assert language_from_config(None) is None
+    assert language_from_config(1) is None
 
 
-def test_user_written_raw_language_is_sent():
-    assert choose_request_language(
-        "ja",
-        wyoming_env=None,
-        local_env=None,
-        raw_stt={"language": "ja"},
-        loaded_resolution="ja",
-    ) == "ja"
+def test_a_reader_error_sends_nothing():
+    def boom():
+        raise OSError("config")
 
-
-def test_section_beats_raw_language_and_env():
-    assert choose_request_language(
-        "ja",
-        wyoming_env="en",
-        local_env="en",
-        raw_stt={"language": "fr", "wyoming": {"language": "ja"}},
-        loaded_resolution="ja",
-    ) == "ja"
-
-
-def test_hermes_local_env_is_used_when_no_raw_key_is_written():
-    assert choose_request_language(
-        "en",
-        wyoming_env=None,
-        local_env="ja",
-        raw_stt={},
-        loaded_resolution="en",
-    ) == "ja"
-
-
-def test_same_string_as_the_resolution_is_not_a_hook():
-    assert choose_request_language(
-        "en",
-        wyoming_env="ja",
-        local_env=None,
-        raw_stt={},
-        loaded_resolution="en",
-    ) == "ja"
-
-
-def test_a_different_passed_language_is_the_hook():
-    assert choose_request_language(
-        "de",
-        wyoming_env="en",
-        local_env=None,
-        raw_stt={"language": "fr", "wyoming": {"language": "ja"}},
-        loaded_resolution="ja",
-    ) == "de"
-
-
-def test_hook_wins_over_the_section():
-    assert choose_request_language(
-        "de",
-        wyoming_env="en",
-        local_env=None,
-        raw_stt={"language": "fr", "wyoming": {"language": "ja"}},
-        loaded_resolution="ja",
-    ) == "de"
-
-
-def test_wyoming_env_beats_raw_stt_language():
-    assert choose_request_language(
-        "en",
-        wyoming_env="ja",
-        local_env=None,
-        raw_stt={"language": "en"},
-        loaded_resolution="en",
-    ) == "ja"
-    assert choose_request_language(
-        "ja",
-        wyoming_env="en",
-        local_env=None,
-        raw_stt={"language": "ja"},
-        loaded_resolution="ja",
-    ) == "en"
-    assert choose_request_language(
-        "ja",
-        wyoming_env=None,
-        local_env="en",
-        raw_stt={"language": "ja"},
-        loaded_resolution="ja",
-    ) == "ja"
-
-
-def test_user_written_en_is_sent():
-    assert choose_request_language(
-        "en",
-        wyoming_env=None,
-        local_env=None,
-        raw_stt={"language": "en"},
-        loaded_resolution="en",
-    ) == "en"
-
-
-def test_no_key_no_env_and_no_hook_omits_language():
-    assert choose_request_language(
-        "en",
-        wyoming_env=None,
-        local_env=None,
-        raw_stt={},
-        loaded_resolution="en",
-    ) is None
-
-
-def test_unreadable_raw_config_skips_to_the_env():
-    assert choose_request_language(
-        "en",
-        wyoming_env="ja",
-        local_env=None,
-        raw_stt=RAW_UNREADABLE,
-        loaded_resolution="en",
-    ) == "ja"
-
-
-def test_empty_and_the_word_default_are_skipped():
-    assert choose_request_language(
-        "default",
-        wyoming_env="  ",
-        local_env="default",
-        raw_stt={"language": "default", "wyoming": {"language": ""}},
-        loaded_resolution="en",
-    ) is None
-    assert choose_request_language(
-        "Default",
-        wyoming_env=None,
-        local_env=None,
-        raw_stt={},
-        loaded_resolution="en",
-    ) == "Default"
-
-
-def test_hook_word_default_falls_through_to_the_section():
-    assert choose_request_language(
-        "default",
-        wyoming_env="ja",
-        local_env=None,
-        raw_stt={"wyoming": {"language": "fr"}},
-        loaded_resolution="en",
-    ) == "fr"
+    assert read_plugin_language(boom) is None
+    assert read_plugin_language(None) is None
+    assert read_plugin_language(lambda: " fr ") == "fr"
 
 
 def _stub_bases():
@@ -174,14 +47,12 @@ def _stub_bases():
         setattr(agent, module_name, module)
 
 
-def _providers(monkeypatch, raw, resolution):
+def _providers(read):
     _stub_bases()
-    monkeypatch.setattr("providers._read_raw_stt", lambda: raw)
-    monkeypatch.setattr("providers._loaded_resolution", lambda: resolution)
-    return build_providers()
+    return build_providers(read)
 
 
-def test_provider_sends_env_language_instead_of_filled_in_en(monkeypatch):
+def test_provider_uses_the_setting_and_ignores_the_passed_language(monkeypatch):
     seen = {}
 
     def fake(_path, **kwargs):
@@ -190,15 +61,15 @@ def test_provider_sends_env_language_instead_of_filled_in_en(monkeypatch):
 
     monkeypatch.setattr("providers.transcribe_file", fake)
     monkeypatch.setenv("WYOMING_STT_LANGUAGE", "ja")
-    monkeypatch.delenv("HERMES_LOCAL_STT_LANGUAGE", raising=False)
-    stt, _tts = _providers(monkeypatch, {}, "en")
+    monkeypatch.setenv("HERMES_LOCAL_STT_LANGUAGE", "de")
+    stt, _tts = _providers(lambda: "fr")
     result = stt.transcribe("clip.wav", language="en")
     assert result["success"] is True
-    assert seen["language"] == "ja"
+    assert seen["language"] == "fr"
     assert seen["env_language"] is None
 
 
-def test_provider_sends_a_passed_language_that_differs(monkeypatch):
+def test_provider_omits_the_word_default(monkeypatch):
     seen = {}
 
     def fake(_path, **kwargs):
@@ -207,29 +78,25 @@ def test_provider_sends_a_passed_language_that_differs(monkeypatch):
 
     monkeypatch.setattr("providers.transcribe_file", fake)
     monkeypatch.setenv("WYOMING_STT_LANGUAGE", "ja")
-    monkeypatch.delenv("HERMES_LOCAL_STT_LANGUAGE", raising=False)
-    stt, _tts = _providers(
-        monkeypatch,
-        {"language": "fr", "wyoming": {"language": "ja"}},
-        "ja",
-    )
-    result = stt.transcribe("clip.wav", language="de")
-    assert result["success"] is True
-    assert seen["language"] == "de"
+    stt, _tts = _providers(lambda: "Default")
+    stt.transcribe("clip.wav", language="ja")
+    assert seen["language"] is None
 
 
-def test_provider_sends_env_ahead_of_raw_en(monkeypatch):
+def test_provider_omits_language_when_the_reader_raises(monkeypatch):
     seen = {}
 
     def fake(_path, **kwargs):
         seen.update(kwargs)
         return {"success": True, "transcript": "ok", "provider": "wyoming"}
 
+    def boom():
+        raise RuntimeError("unreadable")
+
     monkeypatch.setattr("providers.transcribe_file", fake)
-    monkeypatch.setenv("WYOMING_STT_LANGUAGE", "ja")
-    stt, _tts = _providers(monkeypatch, {"language": "en"}, "en")
+    stt, _tts = _providers(boom)
     stt.transcribe("clip.wav", language="en")
-    assert seen["language"] == "ja"
+    assert seen["language"] is None
 
 
 def test_provider_ignores_speed_and_a_hint(monkeypatch):
@@ -240,9 +107,9 @@ def test_provider_ignores_speed_and_a_hint(monkeypatch):
         return {"success": True, "transcript": "ok", "provider": "wyoming"}
 
     monkeypatch.setattr("providers.transcribe_file", fake)
-    monkeypatch.delenv("WYOMING_STT_LANGUAGE", raising=False)
-    monkeypatch.delenv("HERMES_LOCAL_STT_LANGUAGE", raising=False)
-    stt, tts = _providers(monkeypatch, {}, "en")
+    monkeypatch.setenv("WYOMING_STT_LANGUAGE", "ja")
+    monkeypatch.setenv("HERMES_LOCAL_STT_LANGUAGE", "de")
+    stt, tts = _providers(lambda: "")
     stt.transcribe("clip.wav", language="en", prompt="hint", speed=2)
     assert "prompt" not in seen
     assert "speed" not in seen
@@ -259,3 +126,40 @@ def test_provider_ignores_speed_and_a_hint(monkeypatch):
     assert "speed" not in spoken
     assert "prompt" not in spoken
     assert spoken["voice"] == "default"
+
+
+def test_register_reads_stt_language_through_get_config(monkeypatch):
+    seen = {}
+
+    def fake(_path, **kwargs):
+        seen.update(kwargs)
+        return {"success": True, "transcript": "ok", "provider": "wyoming"}
+
+    monkeypatch.setattr("providers.transcribe_file", fake)
+    _stub_bases()
+    from __init__ import register
+
+    class Ctx:
+        def __init__(self):
+            self.asked = []
+
+        def get_config(self, key, default=""):
+            self.asked.append((key, default))
+            return "fr"
+
+        def register_tool(self, **_kwargs):
+            return None
+
+        def register_transcription_provider(self, provider):
+            self.provider = provider
+
+        def register_tts_provider(self, _provider):
+            return None
+
+    ctx = Ctx()
+    register(ctx)
+    assert ctx.asked == []
+    result = ctx.provider.transcribe("clip.wav", language="de")
+    assert result["success"] is True
+    assert ctx.asked == [("stt_language", "")]
+    assert seen["language"] == "fr"

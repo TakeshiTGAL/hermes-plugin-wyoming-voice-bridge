@@ -1,9 +1,21 @@
 name: wyoming-voice-bridge
-version: 0.1.0
+version: 0.1.4
 manifest_version: 2
 description: >-
   Speech recognition and speech synthesis for Hermes voice mode, on a Wyoming
-  server you run. Built on the Wyoming protocol.
+  server you run. Built on the Wyoming protocol. Wyoming is the voice assistant
+  protocol Home Assistant uses to talk to voice services, and the Whisper or
+  Piper server you use with Home Assistant can also give Hermes voice mode its
+  speech recognition and spoken replies.
+  wyoming_voice_status returns one pre_tool_call approve line when the installed
+  wyoming tree is the listed 1.5.4 wheel. Hermes shows that line.
+  Session and always cover only the same which and the same host:port list.
+  A different which or a different server asks again.
+  This build lists one wyoming file-tree sha256, the official 1.5.4 wheel.
+  A different tree is not imported and nothing is sent.
+  A symlink at the ffmpeg path is refused before that path is resolved.
+  This build lists no ffmpeg digest, so audio that is not already
+  16 kHz, 16-bit, mono WAV is not converted.
 author: TakeshiTGAL
 license: MIT
 homepage: https://github.com/TakeshiTGAL/hermes-plugin-wyoming-voice-bridge
@@ -11,10 +23,12 @@ tags: [wyoming, voice, stt, tts]
 requires_hermes: ">=0.21.4"
 
 python_dependencies:
-  - "wyoming>=1.5.4,<2"
+  - "wyoming==1.5.4"
 
 provides_tools:
   - wyoming_voice_status
+provides_hooks:
+  - pre_tool_call
 
 optional_env:
   - name: WYOMING_STT_HOST
@@ -37,11 +51,17 @@ optional_env:
     description: "Model name the server lists as installed. Empty uses the server default."
     prompt: "Wyoming STT model"
     password: false
-  - name: WYOMING_STT_LANGUAGE
-    description: "Sent after a hook and stt.wyoming.language, and before raw stt.language and HERMES_LOCAL_STT_LANGUAGE. Empty or default omits it."
-    prompt: "Wyoming STT language"
-    password: false
   - name: WYOMING_TTS_VOICE
     description: "Voice or speaker the server lists as installed. Empty uses the server default."
     prompt: "Wyoming TTS voice"
     password: false
+config_schema:
+  stt_language:
+    type: str
+    default: ""
+    label: Speech recognition language
+    description: >-
+      Sent to the Wyoming speech-recognition server. Empty, or the word
+      default, sends no language. This is the only language setting.
+      The recognition language Hermes passes, stt.language, and the
+      process environment are not read.

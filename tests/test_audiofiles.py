@@ -1,6 +1,3 @@
-import sys
-import types
-
 import pytest
 
 from audiofiles import _write_guard, write_wav
@@ -65,12 +62,13 @@ def test_each_write_check_fails_three_ways(tmp_path):
     expect(approval_renamed)
 
 
-def test_real_import_notices_a_renamed_check(tmp_path, monkeypatch):
-    agent = types.ModuleType("agent")
-    safety = types.ModuleType("agent.file_safety")
-    safety.is_write_denied = lambda _path: False
-    monkeypatch.setitem(sys.modules, "agent", agent)
-    monkeypatch.setitem(sys.modules, "agent.file_safety", safety)
+def test_a_home_credential_path_is_refused_and_a_normal_path_is_not(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    (home / ".ssh").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("HERMES_HOME", raising=False)
+    monkeypatch.delenv("HERMES_WRITE_SAFE_ROOT", raising=False)
     with pytest.raises(BridgeError) as caught:
-        _write_guard(str(tmp_path / "out.wav"))
+        _write_guard(str(home / ".ssh" / "config"))
     assert "Refusing to write" in caught.value.message
+    _write_guard(str(tmp_path / "out.wav"))

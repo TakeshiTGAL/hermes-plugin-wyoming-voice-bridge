@@ -1,7 +1,7 @@
 """Language Hermes actually passes into transcribe_audio, on two checkouts.
 
 The trees are siblings of this plugin. A checkout that is not there is skipped.
-Preship runs from a git archive, so both tests skip there. Collection does not
+The release check runs from a git archive, so both tests skip there. Collection does not
 import Hermes.
 """
 import json
@@ -74,18 +74,18 @@ def _run_tree(name: str, tmp_path: Path) -> None:
     _run_seeded(name, tmp_path, hermes, env)
     body = json.loads(line[len(marker):])
     expect = {
-        "default_plus_env": "ja",
-        "raw_language_only": "ja",
-        "section_over_raw_and_env": "ja",
-        "hermes_local_only": "ja",
-        "hook": "de",
-        "hook_same_as_resolution": "ja",
+        "default_plus_env": "fr",
+        "raw_language_only": None,
+        "section_over_raw_and_env": None,
+        "hermes_local_only": None,
+        "hook": "ja",
+        "hook_same_as_resolution": None,
         "voice_mode_default": "ja",
-        "voice_mode_default_other": "en",
-        "voice_mode_no_key": "ja",
+        "voice_mode_default_other": None,
+        "voice_mode_no_key": "en",
         "voice_mode_no_key_other": None,
         "user_wrote_en": "en",
-        "raw_en_under_wyoming_env": "ja",
+        "raw_en_under_wyoming_env": None,
         "omit": None,
         "raw_unreadable": "ja",
     }
@@ -130,13 +130,13 @@ def _run_seeded(name: str, tmp_path: Path, hermes: Path, env: dict) -> None:
         pytest.fail(proc.stderr[-2000:] or proc.stdout[-2000:] or "seeded driver produced no result")
     body = json.loads(line[len(marker):])
     expect = {
-        "seeded_example": "ja",
-        "seeded_hook_de": "de",
-        "seeded_section": "ja",
-        "user_file_en": "ja",
+        "seeded_example": "fr",
+        "seeded_hook_de": None,
+        "seeded_section": None,
+        "user_file_en": None,
         "user_file_en_only": "en",
-        "user_file_ja": "en",
-        "voice_default": "ja",
+        "user_file_ja": None,
+        "voice_default": None,
         "voice_default_other": "en",
         "voice_no_key": "ja",
         "voice_no_key_other": None,
@@ -167,7 +167,23 @@ def _driver() -> None:
     import hermes_cli.config as hermes_config
     import hermes_cli.plugins as plugins_mod
 
-    state = {"raw": {}, "raw_fails": False, "loaded": {}, "hook": None, "hook_kind": None}
+    state = {
+        "raw": {},
+        "raw_fails": False,
+        "loaded": {},
+        "hook": None,
+        "hook_kind": None,
+        "plugin_language": None,
+    }
+    plugin_language = {
+        "default_plus_env": "fr",
+        "hook": "ja",
+        "voice_mode_default": "ja",
+        "voice_mode_no_key": "en",
+        "voice_mode_no_key_other": "default",
+        "user_wrote_en": "en",
+        "raw_unreadable": "ja",
+    }
 
     def load_config():
         return {"stt": dict(state["loaded"])}
@@ -388,8 +404,9 @@ def _driver() -> None:
         os.environ["WYOMING_STT_HOST"] = "127.0.0.1"
         os.environ["WYOMING_STT_PORT"] = str(server.port)
         os.environ.pop("WYOMING_STT_MODEL", None)
-        register_provider(bridge.build_providers()[0])
+        register_provider(bridge.build_providers(lambda: state["plugin_language"])[0])
         for case in cases:
+            state["plugin_language"] = plugin_language.get(case["name"])
             state["raw"] = case["raw"]
             state["loaded"] = case["loaded"]
             state["hook"] = case["hook"]
@@ -494,17 +511,32 @@ def _seeded_driver() -> None:
     config_path = home / "config.yaml"
     no_key = "stt:\n  enabled: true\n  provider: wyoming\n"
     cases = [
-        ("seeded_example", seeded, "ja", None, None),
-        ("seeded_hook_de", seeded, "ja", "de", None),
-        ("seeded_section", seeded_section, "en", None, None),
-        ("user_file_en", "stt:\n  enabled: true\n  provider: wyoming\n  language: \"en\"\n", "ja", None, None),
-        ("user_file_en_only", "stt:\n  enabled: true\n  provider: wyoming\n  language: \"en\"\n", None, None, None),
-        ("user_file_ja", "stt:\n  enabled: true\n  provider: wyoming\n  language: ja\n", "en", None, None),
+        ("seeded_example", seeded, "fr", None, None),
+        ("seeded_hook_de", seeded, None, "de", None),
+        ("seeded_section", seeded_section, None, None, None),
+        ("user_file_en", "stt:\n  enabled: true\n  provider: wyoming\n  language: \"en\"\n", None, None, None),
+        ("user_file_en_only", "stt:\n  enabled: true\n  provider: wyoming\n  language: \"en\"\n", "en", None, None),
+        ("user_file_ja", "stt:\n  enabled: true\n  provider: wyoming\n  language: ja\n", None, None, None),
         ("voice_default", seeded, None, "voice", "voice_mode"),
-        ("voice_default_other", seeded, None, "voice", None),
-        ("voice_no_key", no_key, None, "voice", "voice_mode"),
-        ("voice_no_key_other", no_key, None, "voice", "gateway"),
+        ("voice_default_other", seeded, "en", "voice", None),
+        ("voice_no_key", no_key, "ja", "voice", "voice_mode"),
+        ("voice_no_key_other", no_key, "default", "voice", "gateway"),
     ]
+
+    def with_plugin_language(text: str, language: str | None) -> str:
+        if language is None:
+            return text
+        block = (
+            "plugins:\n"
+            "  entries:\n"
+            "    wyoming-voice-bridge:\n"
+            "      settings:\n"
+            f"        stt_language: {json.dumps(language)}\n"
+        )
+        needle = "\nplugins:\n"
+        if needle in text:
+            return text.replace(needle, "\n" + block, 1)
+        return text.rstrip() + "\n" + block
 
     def constant_de(**_kwargs):
         return {"language": "de"}
@@ -519,20 +551,23 @@ def _seeded_driver() -> None:
         os.environ["WYOMING_STT_HOST"] = "127.0.0.1"
         os.environ["WYOMING_STT_PORT"] = str(server.port)
         os.environ.pop("WYOMING_STT_MODEL", None)
-        os.environ.pop("HERMES_LOCAL_STT_LANGUAGE", None)
-        register_provider(bridge.build_providers()[0])
+        os.environ["WYOMING_STT_LANGUAGE"] = "de"
+        os.environ["HERMES_LOCAL_STT_LANGUAGE"] = "de"
         manager = get_plugin_manager()
         manager._discovered = True
+        wyoming_manifest = PluginManifest(name="wyoming-voice-bridge", version="0.1.3")
+        wyoming_ctx = PluginContext(wyoming_manifest, manager)
+
+        def read_setting():
+            return wyoming_ctx.get_config("stt_language", "")
+
+        register_provider(bridge.build_providers(read_setting)[0])
         manifest = PluginManifest(
             name="en-default-hook", version="0.0.1", provides_hooks=["pre_transcription"],
         )
         ctx = PluginContext(manifest, manager)
-        for name, text, wyoming_env, hook_name, source in cases:
-            config_path.write_text(text, encoding="utf-8")
-            if wyoming_env is None:
-                os.environ.pop("WYOMING_STT_LANGUAGE", None)
-            else:
-                os.environ["WYOMING_STT_LANGUAGE"] = wyoming_env
+        for name, text, plugin_language, hook_name, source in cases:
+            config_path.write_text(with_plugin_language(text, plugin_language), encoding="utf-8")
             manager._hooks.pop("pre_transcription", None)
             if hook_name == "de":
                 ctx.register_hook("pre_transcription", constant_de)

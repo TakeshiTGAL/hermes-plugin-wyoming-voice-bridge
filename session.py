@@ -65,6 +65,17 @@ class BridgeError(Exception):
 
 
 def _import_wyoming() -> Any:
+    if __package__:
+        from .messages import library_unpinned
+        from .wyoming_pin import library_status
+    else:
+        from messages import library_unpinned
+        from wyoming_pin import library_status
+    status = library_status()
+    if status == "missing":
+        raise BridgeError(library_missing())
+    if status != "ready":
+        raise BridgeError(library_unpinned())
     try:
         import wyoming.client as client
         import wyoming.error as error

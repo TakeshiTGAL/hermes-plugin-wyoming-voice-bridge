@@ -1,9 +1,12 @@
 """WAV in, WAV out. Audio bytes are not logged."""
 from __future__ import annotations
 
+import hashlib
 import os
+import platform
 import shutil
 import subprocess
+import sys
 import tempfile
 import wave
 from pathlib import Path
@@ -18,6 +21,7 @@ if __package__:
         audio_too_large,
         ffmpeg_failed,
         ffmpeg_missing,
+        ffmpeg_unpinned,
         input_pcm_too_large,
         no_parent,
         not_wav,
@@ -36,6 +40,7 @@ else:
         audio_too_large,
         ffmpeg_failed,
         ffmpeg_missing,
+        ffmpeg_unpinned,
         input_pcm_too_large,
         no_parent,
         not_wav,
@@ -45,6 +50,37 @@ else:
         write_refused,
     )
     from session import BridgeError
+
+
+# sha256 hex of ffmpeg binaries this build may run, keyed by (sys.platform, platform.machine()).
+# Empty until an audited pin exists. A path whose digest is not listed is not started.
+FFMPEG_SHA256: dict[tuple[str, str], frozenset[str]] = {}
+
+
+def _ffmpeg_digest(path: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def approved_ffmpeg() -> str | None:
+    """Real path of ffmpeg when its sha256 is listed for this OS and CPU. Otherwise None."""
+    found = shutil.which("ffmpeg")
+    if not found or os.path.islink(found):
+        return None
+    real = os.path.realpath(found)
+    if not os.path.isfile(real):
+        return None
+    try:
+        digest = _ffmpeg_digest(real)
+    except OSError:
+        return None
+    allowed = FFMPEG_SHA256.get((sys.platform, platform.machine()))
+    if not allowed or digest not in allowed:
+        return None
+    return real
 
 
 def _refuse_symlink(path: Path, what: str) -> None:
@@ -81,11 +117,14 @@ def load_pcm_wav(path: str) -> str:
     if audio.suffix.lower() == ".wav" and _already_target(audio):
         _reject_oversized_pcm(audio, None)
         return str(audio)
-    ffmpeg = shutil.which("ffmpeg")
-    if not ffmpeg:
+    if not shutil.which("ffmpeg"):
         raise BridgeError(ffmpeg_missing(audio.suffix.lower()))
     temp_dir = tempfile.mkdtemp(prefix="wyoming-voice-")
     dest = os.path.join(temp_dir, "speech.wav")
+    ffmpeg = approved_ffmpeg()
+    if not ffmpeg:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        raise BridgeError(ffmpeg_unpinned())
     try:
         subprocess.run(
             [
@@ -120,18 +159,60 @@ def _already_target(path: Path) -> bool:
         return False
 
 
-def _import_write_checks() -> tuple[Any, Any]:
-    import agent.file_safety as safety
+_HOME_CREDENTIALS = (".ssh", ".aws", ".gnupg", ".kube")
+_HERMES_PROTECTED = ("state.db", "sessions", "mcp-tokens", "pairing", "vault", "browser-profile")
 
-    denied = getattr(safety, "is_write_denied", None)
-    approval = getattr(safety, "is_write_approval_required", None)
-    if not callable(denied) or not callable(approval):
-        raise AttributeError("agent.file_safety write check was renamed")
-    return denied, approval
+
+def _under(path: str, root: str) -> bool:
+    return path == root or path.startswith(root + os.sep)
+
+
+def _path_is_denied(path: str) -> bool:
+    """Refuse credential locations without importing Hermes internals.
+
+    A symlink was already refused by the caller. This also refuses the home
+    credential directories, Hermes session and token directories, and a path
+    outside HERMES_WRITE_SAFE_ROOT when that variable is set.
+    """
+    try:
+        resolved = os.path.realpath(os.path.expanduser(path))
+        home = os.path.realpath(os.path.expanduser("~"))
+    except OSError:
+        return True
+    for name in _HOME_CREDENTIALS:
+        if _under(resolved, os.path.join(home, name)):
+            return True
+    if resolved == os.path.join(home, ".netrc"):
+        return True
+    hermes_home = os.environ.get("HERMES_HOME")
+    if hermes_home:
+        try:
+            base = os.path.realpath(os.path.expanduser(hermes_home))
+        except OSError:
+            return True
+        for sub in _HERMES_PROTECTED:
+            if _under(resolved, os.path.join(base, sub)):
+                return True
+    safe = os.environ.get("HERMES_WRITE_SAFE_ROOT") or ""
+    roots = []
+    for part in safe.split(os.pathsep):
+        if not part:
+            continue
+        try:
+            roots.append(os.path.realpath(os.path.expanduser(part)))
+        except OSError:
+            return True
+    if roots and not any(_under(resolved, root) for root in roots):
+        return True
+    return False
+
+
+def _local_write_checks() -> tuple[Any, Any]:
+    return _path_is_denied, (lambda _path: False)
 
 
 def _write_guard(path: str, loader: Any = None) -> None:
-    load = _import_write_checks if loader is None else loader
+    load = _local_write_checks if loader is None else loader
     try:
         denied_fn, approval_fn = load()
     except Exception as exc:

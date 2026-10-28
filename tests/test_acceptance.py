@@ -1,10 +1,13 @@
 """Offline checks from the frozen acceptance table that the older files did not cover."""
+import hashlib
 import inspect
 import os
+import platform
 import shutil
 import socket
 import struct
 import subprocess
+import sys
 import tempfile
 import time
 import traceback
@@ -161,8 +164,10 @@ def test_tool_handler_keeps_the_env_host(monkeypatch):
     register(ctx)
     import json
     body = json.loads(ctx.handler({"which": "stt", "host": "10.9.9.9", "port": "9"}))
-    assert seen == [("127.0.0.1", 10300)]
-    assert body["stt"]["host"] == "127.0.0.1"
+    assert seen == []
+    assert body["ok"] is False
+    assert body["error_type"] == "bad_args"
+    assert "10.9.9.9" not in json.dumps(body)
 
 
 def test_speech_path_does_not_ask_for_approval(tmp_path, monkeypatch):
@@ -173,7 +178,7 @@ def test_speech_path_does_not_ask_for_approval(tmp_path, monkeypatch):
     def boom(*_args, **_kwargs):
         raise AssertionError("approval")
 
-    monkeypatch.setattr("service.approve_describe", boom)
+    monkeypatch.setattr("gate.take_describe", boom)
     result = transcribe_file(
         str(wav),
         describe_fn=lambda *_a, **_k: {"asr": [_asr()], "tts": []},
@@ -354,6 +359,23 @@ def test_symlink_and_unconvertible_audio_send_nothing(tmp_path, monkeypatch):
     assert not again["transcript"]
 
 
+def _allow_ffmpeg(monkeypatch, path: str) -> str:
+    real = os.path.realpath(path)
+    if os.path.islink(path):
+        # The plugin refuses a symlink at the PATH entry (Homebrew installs one). Put a
+        # regular copy of the same binary first on PATH, so the pinned path is not a link.
+        holder = Path(tempfile.mkdtemp(prefix="ffmpeg-pin-"))
+        shutil.copy2(real, holder / "ffmpeg")
+        monkeypatch.setenv("PATH", str(holder) + os.pathsep + os.environ.get("PATH", ""))
+        real = str(holder / "ffmpeg")
+    digest = hashlib.sha256(Path(real).read_bytes()).hexdigest()
+    monkeypatch.setattr(
+        "audiofiles.FFMPEG_SHA256",
+        {(sys.platform, platform.machine()): frozenset({digest})},
+    )
+    return os.path.realpath(real)
+
+
 def test_target_wav_does_not_start_ffmpeg_and_conversion_is_an_argv_list(tmp_path, monkeypatch):
     _env(monkeypatch)
     wav = tmp_path / "in.wav"
@@ -384,9 +406,10 @@ def test_target_wav_does_not_start_ffmpeg_and_conversion_is_an_argv_list(tmp_pat
     monkeypatch.setattr(subprocess, "run", spy)
     # load_pcm_wav looks up subprocess.run on its own module.
     monkeypatch.setattr("audiofiles.subprocess.run", spy)
+    pinned = _allow_ffmpeg(monkeypatch, shutil.which("ffmpeg"))
     converted = load_pcm_wav(str(other))
     assert isinstance(seen["args"], list)
-    assert seen["args"][0] == shutil.which("ffmpeg")
+    assert seen["args"][0] == pinned
     assert FFMPEG_MAX_SECONDS == 656
     assert seen["args"][1:4] == ["-y", "-t", str(FFMPEG_MAX_SECONDS)]
     assert "-i" in seen["args"]
@@ -461,6 +484,7 @@ def test_small_flac_that_expands_past_20_mib_sends_no_audio(tmp_path, monkeypatc
         return result
 
     monkeypatch.setattr("audiofiles.subprocess.run", spy_run)
+    _allow_ffmpeg(monkeypatch, ffmpeg)
     real_mkdtemp = tempfile.mkdtemp
 
     def spy_mkdtemp(*args, **kwargs):

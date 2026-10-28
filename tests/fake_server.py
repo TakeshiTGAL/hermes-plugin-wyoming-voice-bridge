@@ -53,7 +53,7 @@ class FakeWyoming:
 
 
 def _allow_loopback_connect() -> Callable[[], None]:
-    """Let a test reach 127.0.0.1 even when preship_check has replaced connect()."""
+    """Let a test reach 127.0.0.1 even when a socket guard has replaced connect()."""
     previous = socket.socket.connect
 
     def connect(self: socket.socket, address: Any) -> Any:

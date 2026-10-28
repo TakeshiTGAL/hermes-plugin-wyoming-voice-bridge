@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import ipaddress
-import os
 import re
 from dataclasses import dataclass
 
@@ -73,11 +72,29 @@ def parse_endpoint(host: str | None, port: str | None) -> Endpoint:
     return Endpoint(host=host, port=port)
 
 
+def setting(name: str) -> str | None:
+    """One WYOMING_* value for the active Hermes profile, read at call time.
+
+    Hermes's secret scope keeps one profile's settings out of another profile's turn
+    when a gateway serves several profiles. With a single profile it reads the
+    environment, as before. An unscoped read under multiplexing raises; it is not caught.
+    """
+    from agent.secret_scope import get_secret
+
+    return get_secret(name)
+
+
 def endpoint_from_env(prefix: str, env: dict[str, str] | None = None) -> Endpoint | None:
-    """Return None when both variables are absent. Raise when one of them is set and invalid."""
-    source = os.environ if env is None else env
-    host = source.get(f"{prefix}_HOST")
-    port = source.get(f"{prefix}_PORT")
+    """Return None when both variables are absent. Raise when one of them is set and invalid.
+
+    With no mapping, the values come from setting(), so the active profile decides
+    where audio goes."""
+    if env is None:
+        host = setting(f"{prefix}_HOST")
+        port = setting(f"{prefix}_PORT")
+    else:
+        host = env.get(f"{prefix}_HOST")
+        port = env.get(f"{prefix}_PORT")
     if (host is None or host.strip() == "") and (port is None or port.strip() == ""):
         return None
     try:

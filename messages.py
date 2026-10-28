@@ -19,7 +19,14 @@ NAME_MAX = 128
 
 
 def not_configured(kind: str) -> str:
-    return f"Wyoming {kind} host and port are not set."
+    if "recognition" in kind:
+        names, which = "WYOMING_STT_HOST and WYOMING_STT_PORT", "stt"
+    else:
+        names, which = "WYOMING_TTS_HOST and WYOMING_TTS_PORT", "tts"
+    return (
+        f"Wyoming {kind} host and port are not set. "
+        f"Set {names}, then call wyoming_voice_status with which {which}. " f"日本語: ホストとポートを設定して、which を {which} にして wyoming_voice_status をもう一度呼ぶ。"
+    )
 
 
 def bad_endpoint(kind: str, detail: str) -> str:
@@ -159,6 +166,13 @@ def ffmpeg_failed() -> str:
     return "ffmpeg could not convert this audio to 16 kHz mono WAV. It was not sent."
 
 
+def ffmpeg_unpinned() -> str:
+    return (
+        "ffmpeg was found, but its sha256 is not in the table for this operating system and CPU. "
+        "It was not started. WAV at 16 kHz, 16-bit, mono does not need ffmpeg."
+    )
+
+
 def not_wav() -> str:
     return "The converted audio was not a readable WAV file. It was not sent."
 
@@ -187,8 +201,23 @@ def temp_exists() -> str:
     return "The temporary file for that speech already exists. This plugin did not replace it."
 
 
+_INSTALL_STEP = (
+    "Install wyoming 1.5.4 for Hermes: run hermes plugins enable wyoming-voice-bridge and answer yes "
+    "to the Python dependency question, or run pip install wyoming==1.5.4 with the Python that runs Hermes. "
+    "Then call wyoming_voice_status again. There is no API key for this library."
+)
+
+
 def library_missing() -> str:
-    return "The wyoming library is not installed, so nothing was sent."
+    return "The wyoming library is not installed, so nothing was sent. " + _INSTALL_STEP
+
+
+def library_unpinned() -> str:
+    return (
+        "The installed wyoming package is not the wyoming 1.5.4 wheel from PyPI whose sha256 this build lists, "
+        "so it was not imported and nothing was sent. Another version, or a changed file in that package, "
+        "has a different sha256. " + _INSTALL_STEP
+    )
 
 
 def approval_blocked(reason: str) -> str:
